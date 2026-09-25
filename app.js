@@ -14,6 +14,9 @@ const defaultState = {
   selectedTypeId: starterInventory[0].id,
   placements: [],
   drafts: [],
+  split: null,
+  splitCheck: null,
+  blockedCells: [],
   settings: {
     paperSize: "postcard",
     flowMode: "horizontal",
@@ -47,7 +50,17 @@ const els = {
   inventoryCount: document.querySelector("#inventoryCount"),
   saveDraftBtn: document.querySelector("#saveDraftBtn"),
   exportBtn: document.querySelector("#exportBtn"),
-  clearBoardBtn: document.querySelector("#clearBoardBtn")
+  clearBoardBtn: document.querySelector("#clearBoardBtn"),
+  splitDirection: document.querySelector("#splitDirection"),
+  splitLine: document.querySelector("#splitLine"),
+  splitLineLabel: document.querySelector("#splitLineLabel"),
+  makeSplitBtn: document.querySelector("#makeSplitBtn"),
+  cancelSplitBtn: document.querySelector("#cancelSplitBtn"),
+  pageNotice: document.querySelector("#pageNotice"),
+  splitSummary: document.querySelector("#splitSummary"),
+  plateList: document.querySelector("#plateList"),
+  mergePreview: document.querySelector("#mergePreview"),
+  splitCheckList: document.querySelector("#splitCheckList")
 };
 
 function loadState() {
@@ -89,6 +102,119 @@ function getUsage() {
     acc[placement.typeId] = (acc[placement.typeId] || 0) + 1;
     return acc;
   }, {});
+}
+
+let pageNotice = null;
+
+function setNotice(text, kind = "info") {
+  pageNotice = text ? { text, kind } : null;
+  renderNotice();
+}
+
+function renderNotice() {
+  if (!pageNotice) {
+    els.pageNotice.hidden = true;
+    return;
+  }
+  els.pageNotice.hidden = false;
+  els.pageNotice.textContent = pageNotice.text;
+  els.pageNotice.className = `page-notice ${pageNotice.kind}`;
+}
+
+function plateOfCell(row, col) {
+  if (!state.split) return null;
+  const line = state.split.line - 1;
+  if (state.split.direction === "horizontal") {
+    if (row === line) return "cut";
+    return row < line ? "a" : "b";
+  }
+  if (col === line) return "cut";
+  return col < line ? "a" : "b";
+}
+
+function getPlateRegion(plate) {
+  const { cols, rows } = getGrid();
+  const line = state.split.line - 1;
+  const limit = state.split.direction === "horizontal" ? rows : cols;
+  return plate === "a" ? { start: 0, end: line - 1, limit } : { start: line + 1, end: limit - 1, limit };
+}
+
+function placementsInPlate(plate) {
+  return state.placements.filter((item) => plateOfCell(item.row, item.col) === plate);
+}
+
+function combinedUsageCheck() {
+  const usage = getUsage();
+  return state.inventory
+    .filter((item) => usage[item.id])
+    .map((item) => ({
+      char: item.char,
+      style: item.style,
+      used: usage[item.id],
+      quantity: item.quantity,
+      ok: usage[item.id] <= item.quantity
+    }));
+}
+
+function markPlateEdited(editedPlate) {
+  if (!state.split) return;
+  const other = editedPlate === "a" ? "b" : "a";
+  state.split.plates[editedPlate].status = "已改动";
+  state.split.plates[other].status = "待复核";
+}
+
+function makeSplit() {
+  const direction = els.splitDirection.value;
+  const line = Number(els.splitLine.value);
+  const { cols, rows } = getGrid();
+  const limit = direction === "horizontal" ? rows : cols;
+  const unit = direction === "horizontal" ? "行" : "列";
+  if (!Number.isInteger(line) || line < 1 || line > limit) {
+    setNotice(`请填写有效的分隔${unit}（1–${limit}）。`, "warn");
+    return;
+  }
+  if (line < 2 || line > limit - 1) {
+    setNotice(`分隔${unit}太靠边，甲、乙两张小版都要留出版面。`, "warn");
+    return;
+  }
+  const blocked = state.placements.filter((item) => (direction === "horizontal" ? item.row : item.col) === line - 1);
+  if (blocked.length) {
+    state.blockedCells = blocked.map((item) => ({ row: item.row, col: item.col }));
+    setNotice(`分隔${unit}上有 ${blocked.length} 个落字碍事，已在版面标出，先不开单。`, "warn");
+    renderAll();
+    return;
+  }
+  const check = combinedUsageCheck();
+  const failures = check.filter((item) => !item.ok);
+  state.splitCheck = {
+    at: new Date().toISOString(),
+    ok: failures.length === 0,
+    failures: failures.map((item) => ({ char: item.char, style: item.style, used: item.used, quantity: item.quantity }))
+  };
+  if (failures.length) {
+    state.blockedCells = [];
+    setNotice(`「${failures.map((item) => item.char).join("、")}」两版合计用量超出库存，拒绝开单。`, "warn");
+    renderAll();
+    return;
+  }
+  state.split = {
+    direction,
+    line,
+    createdAt: new Date().toISOString(),
+    plates: { a: { status: "正常" }, b: { status: "正常" } }
+  };
+  state.blockedCells = [];
+  const cutLabel = direction === "horizontal" ? `横切第${line}行` : `竖切第${line}列`;
+  setNotice(`已按${cutLabel}生成甲、乙两张小版，库存核对通过。分单信息见下方，核对记录见右侧。`, "ok");
+  els.splitDirection.value = direction;
+  renderAll();
+}
+
+function cancelSplit() {
+  state.split = null;
+  state.blockedCells = [];
+  setNotice("已取消分单。", "info");
+  renderAll();
 }
 
 function renderSettings() {
@@ -139,6 +265,7 @@ function renderInventory() {
 function renderStage() {
   const { cols, rows } = getGrid();
   const map = new Map(state.placements.map((item) => [placementKey(item.row, item.col), item]));
+  const blockedSet = new Set(state.blockedCells.map((item) => placementKey(item.row, item.col)));
   els.stage.className = `stage ${state.settings.paperSize}`;
   els.stage.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
   els.stage.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
@@ -148,9 +275,16 @@ function renderStage() {
     for (let col = 0; col < cols; col += 1) {
       const placement = map.get(placementKey(row, col));
       const type = placement ? state.inventory.find((item) => item.id === placement.typeId) : null;
-      const vertical = state.settings.flowMode === "vertical" ? "vertical" : "";
+      const zone = state.split ? plateOfCell(row, col) : null;
+      const classes = ["cell"];
+      if (type) classes.push("used");
+      if (state.settings.flowMode === "vertical") classes.push("vertical");
+      if (zone === "cut") classes.push("cut");
+      if (zone === "a") classes.push("zone-a");
+      if (zone === "b") classes.push("zone-b");
+      if (blockedSet.has(placementKey(row, col))) classes.push("blocked");
       cells.push(`
-        <button class="cell ${type ? "used" : ""} ${vertical}" data-row="${row}" data-col="${col}" type="button" aria-label="第${row + 1}行第${col + 1}列">
+        <button class="${classes.join(" ")}" data-row="${row}" data-col="${col}" type="button" aria-label="第${row + 1}行第${col + 1}列">
           ${type ? escapeHtml(type.char) : ""}
         </button>
       `);
@@ -186,6 +320,115 @@ function renderUsage() {
       .join("") || `<p class="empty">还没有落字。</p>`;
 }
 
+function renderSplitControls() {
+  const { cols, rows } = getGrid();
+  const isRow = els.splitDirection.value === "horizontal";
+  const limit = isRow ? rows : cols;
+  els.splitLineLabel.textContent = isRow ? "分隔行" : "分隔列";
+  els.splitLine.max = limit;
+  els.splitLine.placeholder = `2–${limit - 1}`;
+  if (state.split && !els.splitLine.value) els.splitLine.value = state.split.line;
+  els.cancelSplitBtn.hidden = !state.split;
+  els.makeSplitBtn.textContent = state.split ? "重新分单" : "生成分单";
+}
+
+function renderSplitPanel() {
+  if (!state.split) {
+    els.splitSummary.textContent = "未分单";
+    els.plateList.innerHTML = `<p class="empty">还没有分单。在版面设置旁选切法、填分隔位置后生成。</p>`;
+    els.mergePreview.style.gridTemplateColumns = "";
+    els.mergePreview.innerHTML = `<p class="empty">分单后在此按原坐标拼回整张预览。</p>`;
+    return;
+  }
+  const directionLabel = state.split.direction === "horizontal" ? "横切" : "竖切";
+  const unit = state.split.direction === "horizontal" ? "行" : "列";
+  els.splitSummary.textContent = `${directionLabel}第${state.split.line}${unit} · ${new Date(state.split.createdAt).toLocaleString("zh-CN")}`;
+  els.plateList.innerHTML = ["a", "b"]
+    .map((plate) => {
+      const name = plate === "a" ? "甲" : "乙";
+      const side = state.split.direction === "horizontal" ? (plate === "a" ? "上" : "下") : plate === "a" ? "左" : "右";
+      const region = getPlateRegion(plate);
+      const placements = placementsInPlate(plate);
+      const typeCount = new Set(placements.map((item) => item.typeId)).size;
+      const status = state.split.plates[plate].status;
+      const statusClass = status === "正常" ? "ok" : status === "已改动" ? "info" : "gold";
+      return `
+        <article class="plate-card">
+          <header>
+            <strong>${name}版（${side}）</strong>
+            <span class="badge ${statusClass}">${status}</span>
+          </header>
+          <p>第${region.start + 1}–${region.end + 1}${unit} · ${placements.length}个落字 · ${typeCount}种字模</p>
+          ${status !== "正常" ? `<button type="button" data-review-plate="${plate}">确认复核</button>` : ""}
+        </article>
+      `;
+    })
+    .join("");
+  renderMergePreview();
+}
+
+function renderMergePreview() {
+  const { cols, rows } = getGrid();
+  const map = new Map(state.placements.map((item) => [placementKey(item.row, item.col), item]));
+  els.mergePreview.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  const cells = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const placement = map.get(placementKey(row, col));
+      const type = placement ? state.inventory.find((item) => item.id === placement.typeId) : null;
+      const zone = plateOfCell(row, col);
+      const classes = ["pv-cell"];
+      if (type) classes.push("used");
+      if (zone === "cut") classes.push("cut");
+      if (zone === "a") classes.push("zone-a");
+      if (zone === "b") classes.push("zone-b");
+      cells.push(`<span class="${classes.join(" ")}">${type ? escapeHtml(type.char) : ""}</span>`);
+    }
+  }
+  els.mergePreview.innerHTML = cells.join("");
+}
+
+function renderSplitCheck() {
+  const parts = [];
+  if (state.splitCheck) {
+    const time = new Date(state.splitCheck.at).toLocaleString("zh-CN");
+    if (state.splitCheck.ok) {
+      parts.push(`<p class="check-record ok">上次核对通过 · ${time}</p>`);
+    } else {
+      parts.push(`<p class="check-record warn">拒绝开单 · ${time}</p>`);
+      parts.push(
+        state.splitCheck.failures
+          .map(
+            (item) => `
+              <div class="usage-item warn">
+                <strong>${escapeHtml(item.char)} ${escapeHtml(item.style)}</strong>
+                <span>${item.used}/${item.quantity}</span>
+              </div>
+            `
+          )
+          .join("")
+      );
+    }
+  }
+  if (state.split) {
+    const check = combinedUsageCheck();
+    parts.push(`<p class="check-sub">两版合计实时用量</p>`);
+    parts.push(
+      check
+        .map(
+          (item) => `
+            <div class="usage-item ${item.ok ? "" : "warn"}">
+              <strong>${escapeHtml(item.char)} ${escapeHtml(item.style)}</strong>
+              <span>${item.used}/${item.quantity}</span>
+            </div>
+          `
+        )
+        .join("") || `<p class="empty">两版都还没有落字。</p>`
+    );
+  }
+  els.splitCheckList.innerHTML = parts.join("") || `<p class="empty">分单后在此核对两版合计用量。</p>`;
+}
+
 function renderDrafts() {
   els.draftList.innerHTML =
     state.drafts
@@ -211,11 +454,21 @@ function renderAll() {
   renderInventory();
   renderStage();
   renderUsage();
+  renderSplitControls();
+  renderSplitPanel();
+  renderSplitCheck();
   renderDrafts();
 }
 
 function placeType(row, col, typeId = state.selectedTypeId) {
   if (!typeId) return;
+  if (state.split && plateOfCell(row, col) === "cut") {
+    state.blockedCells = [{ row, col }];
+    setNotice("分切线上不能落字，已标出该格。", "warn");
+    renderAll();
+    return;
+  }
+  const plate = state.split ? plateOfCell(row, col) : null;
   const existingIndex = state.placements.findIndex((item) => item.row === row && item.col === col);
   if (existingIndex >= 0) {
     if (state.placements[existingIndex].typeId === typeId) {
@@ -226,6 +479,8 @@ function placeType(row, col, typeId = state.selectedTypeId) {
   } else {
     state.placements.push({ row, col, typeId });
   }
+  state.blockedCells = [];
+  if (plate) markPlateEdited(plate);
   renderAll();
 }
 
@@ -313,6 +568,11 @@ els.paperSize.addEventListener("change", () => {
   state.settings.paperSize = els.paperSize.value;
   const { cols, rows } = getGrid();
   state.placements = state.placements.filter((item) => item.row < rows && item.col < cols);
+  state.blockedCells = [];
+  if (state.split) {
+    state.split = null;
+    setNotice("纸张尺寸变了，分单已取消。", "info");
+  }
   renderAll();
 });
 
@@ -338,6 +598,24 @@ els.saveDraftBtn.addEventListener("click", saveDraft);
 els.exportBtn.addEventListener("click", exportPreview);
 els.clearBoardBtn.addEventListener("click", () => {
   state.placements = [];
+  state.blockedCells = [];
+  if (state.split) {
+    state.split = null;
+    setNotice("版面已清空，分单已取消。", "info");
+  }
+  renderAll();
+});
+
+els.splitDirection.addEventListener("change", renderSplitControls);
+els.makeSplitBtn.addEventListener("click", makeSplit);
+els.cancelSplitBtn.addEventListener("click", cancelSplit);
+
+els.plateList.addEventListener("click", (event) => {
+  const reviewButton = event.target.closest("[data-review-plate]");
+  if (!reviewButton || !state.split) return;
+  const plate = reviewButton.dataset.reviewPlate;
+  state.split.plates[plate].status = "正常";
+  setNotice(`${plate === "a" ? "甲" : "乙"}版已复核。`, "ok");
   renderAll();
 });
 
@@ -348,6 +626,10 @@ els.typeList.addEventListener("click", (event) => {
     state.inventory = state.inventory.filter((item) => item.id !== typeId);
     state.placements = state.placements.filter((item) => item.typeId !== typeId);
     if (state.selectedTypeId === typeId) state.selectedTypeId = state.inventory[0]?.id || null;
+    if (state.split) {
+      state.split.plates.a.status = "待复核";
+      state.split.plates.b.status = "待复核";
+    }
     renderAll();
     return;
   }
@@ -388,6 +670,11 @@ els.draftList.addEventListener("click", (event) => {
     if (!draft) return;
     state.settings = structuredClone(draft.settings);
     state.placements = structuredClone(draft.placements);
+    state.blockedCells = [];
+    if (state.split) {
+      state.split = null;
+      setNotice("已载入草稿，原分单已取消。", "info");
+    }
     renderAll();
   }
   if (deleteButton) {
@@ -395,5 +682,10 @@ els.draftList.addEventListener("click", (event) => {
     renderAll();
   }
 });
+
+if (state.split) {
+  els.splitDirection.value = state.split.direction;
+  els.splitLine.value = state.split.line;
+}
 
 renderAll();

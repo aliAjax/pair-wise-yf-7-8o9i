@@ -44,6 +44,22 @@
           作品名
           <input id="workTitle" type="text" placeholder="例：晚风小笺" />
         </label>
+        <div class="split-controls" aria-label="拼版分单">
+          <span class="split-title">拼版分单</span>
+          <label>
+            切法
+            <select id="splitDirection">
+              <option value="horizontal">横切</option>
+              <option value="vertical">竖切</option>
+            </select>
+          </label>
+          <label>
+            <span id="splitLineLabel">分隔行</span>
+            <input id="splitLine" type="number" min="1" step="1" placeholder="行号" />
+          </label>
+          <button id="makeSplitBtn" type="button">生成分单</button>
+          <button id="cancelSplitBtn" type="button" hidden>取消分单</button>
+        </div>
       </section>
 
       <section class="workspace">
@@ -81,6 +97,7 @@
             </div>
             <div id="shortageBadge" class="badge ok">数量充足</div>
           </div>
+          <div id="pageNotice" class="page-notice" hidden></div>
           <div id="stage" class="stage" aria-label="排版画布"></div>
         </section>
 
@@ -91,9 +108,29 @@
           </div>
           <div id="usageList" class="usage-list"></div>
           <div class="divider"></div>
+          <h3>分单库存核对</h3>
+          <div id="splitCheckList" class="split-check-list"></div>
+          <div class="divider"></div>
           <h3>已保存草稿</h3>
           <div id="draftList" class="draft-list"></div>
         </aside>
+      </section>
+
+      <section class="split-section" aria-label="拼版分单">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>分单信息</h2>
+            <span id="splitSummary">未分单</span>
+          </div>
+          <div id="plateList" class="plate-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>合版预览</h2>
+            <span>按原坐标拼回整张</span>
+          </div>
+          <div id="mergePreview" class="merge-preview-grid"></div>
+        </div>
       </section>
     </main>
 
