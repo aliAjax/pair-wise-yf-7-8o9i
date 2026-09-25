@@ -44,7 +44,24 @@
           作品名
           <input id="workTitle" type="text" placeholder="例：晚风小笺" />
         </label>
+        <div class="split-controls" role="group" aria-label="拼版分单">
+          <span class="split-title">拼版分单</span>
+          <label>
+            切法
+            <select id="splitDirection">
+              <option value="horizontal">横切</option>
+              <option value="vertical">竖切</option>
+            </select>
+          </label>
+          <label>
+            <span id="splitPositionName">分隔行</span>
+            <input id="splitPosition" type="number" min="2" step="1" placeholder="行号" />
+          </label>
+          <button id="splitCreateBtn" class="primary" type="button">开单</button>
+        </div>
       </section>
+
+      <section id="splitInfo" class="split-info" aria-label="分单信息" hidden></section>
 
       <section class="workspace">
         <aside class="panel inventory-panel">
@@ -81,6 +98,8 @@
             </div>
             <div id="shortageBadge" class="badge ok">数量充足</div>
           </div>
+          <div id="plateLegend" class="plate-legend" hidden></div>
+          <div id="stageHint" class="stage-hint" role="status" hidden></div>
           <div id="stage" class="stage" aria-label="排版画布"></div>
         </section>
 
@@ -90,6 +109,9 @@
             <span id="placedCount"></span>
           </div>
           <div id="usageList" class="usage-list"></div>
+          <div class="divider"></div>
+          <h3>分单库存检查</h3>
+          <div id="splitStock" class="split-stock"></div>
           <div class="divider"></div>
           <h3>已保存草稿</h3>
           <div id="draftList" class="draft-list"></div>
